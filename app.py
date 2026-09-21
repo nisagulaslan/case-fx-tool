@@ -4,11 +4,12 @@ from decimal import Decimal
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 
 app = FastAPI(title="FX Conversion Tool")
+
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(
@@ -23,12 +24,14 @@ async def validation_exception_handler(
         },
     )
 
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content=exc.detail,
     )
+
 
 UPSTREAM_BASE = os.getenv(
     "FX_UPSTREAM_BASE",
@@ -40,6 +43,7 @@ PORT = int(os.getenv("PORT", "8080"))
 currency_cache = None
 rate_cache = {}
 
+
 async def get_currencies():
     global currency_cache
 
@@ -48,14 +52,59 @@ async def get_currencies():
 
     url = f"{UPSTREAM_BASE}/v1/currencies"
 
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        response = await client.get(url)
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(url)
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "error": "upstream_timeout",
+                "message": "exchange rate service timed out",
+            },
+        )
 
-    response.raise_for_status()
+    if response.status_code >= 500:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "upstream_error",
+                "message": "exchange rate service returned an error",
+            },
+        )
 
-    currency_cache = response.json()
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "upstream_error",
+                "message": "exchange rate service returned an unexpected status",
+            },
+        )
 
+    try:
+        data = response.json()
+    except ValueError:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "upstream_invalid_response",
+                "message": "exchange rate service returned invalid JSON",
+            },
+        )
+
+    if not isinstance(data, dict):
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "upstream_invalid_response",
+                "message": "exchange rate service returned an unexpected response",
+            },
+        )
+
+    currency_cache = data
     return currency_cache
+
 
 @app.get("/tools/convert")
 async def convert(
@@ -64,6 +113,9 @@ async def convert(
     to_currency: str = Query(..., alias="to"),
     asked_date: date = Query(..., alias="date"),
 ):
+    from_code = from_currency.upper()
+    to_code = to_currency.upper()
+
     if amount <= 0:
         raise HTTPException(
             status_code=400,
@@ -72,7 +124,7 @@ async def convert(
                 "message": "amount must be greater than zero",
             },
         )
-    
+
     decimal_places = max(0, -amount.as_tuple().exponent)
 
     if decimal_places >= 10:
@@ -93,27 +145,7 @@ async def convert(
             },
         )
 
-    currencies = await get_currencies()
-
-    if from_currency.upper() not in currencies:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "invalid_currency",
-                "message": f"invalid currency code: {from_currency.upper()}",
-            },
-        )
-
-    if to_currency.upper() not in currencies:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "invalid_currency",
-                "message": f"invalid currency code: {to_currency.upper()}",
-            },
-        )
-
-    if from_currency.upper() == to_currency.upper():
+    if from_code == to_code:
         raise HTTPException(
             status_code=400,
             detail={
@@ -122,11 +154,31 @@ async def convert(
             },
         )
 
+    currencies = await get_currencies()
+
+    if from_code not in currencies:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_currency",
+                "message": f"invalid currency code: {from_code}",
+            },
+        )
+
+    if to_code not in currencies:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_currency",
+                "message": f"invalid currency code: {to_code}",
+            },
+        )
+
     cache_key = (
-    from_currency.upper(),
-    to_currency.upper(),
-    asked_date,
-)
+        from_code,
+        to_code,
+        asked_date,
+    )
 
     if cache_key in rate_cache:
         rate, rate_date = rate_cache[cache_key]
@@ -138,8 +190,8 @@ async def convert(
                 response = await client.get(
                     url,
                     params={
-                        "base": from_currency.upper(),
-                        "symbols": to_currency.upper(),
+                        "base": from_code,
+                        "symbols": to_code,
                     },
                 )
         except httpx.TimeoutException:
@@ -169,7 +221,14 @@ async def convert(
                 },
             )
 
-        response.raise_for_status()
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "upstream_error",
+                    "message": "exchange rate service returned an unexpected status",
+                },
+            )
 
         try:
             data = response.json()
@@ -183,7 +242,7 @@ async def convert(
             )
 
         try:
-            rate = Decimal(str(data["rates"][to_currency.upper()]))
+            rate = Decimal(str(data["rates"][to_code]))
             rate_date = date.fromisoformat(data["date"])
         except (KeyError, ValueError, TypeError):
             raise HTTPException(
@@ -200,8 +259,8 @@ async def convert(
 
     return {
         "amount": amount,
-        "from": from_currency.upper(),
-        "to": to_currency.upper(),
+        "from": from_code,
+        "to": to_code,
         "rate": rate,
         "result": result,
         "rate_date": rate_date,
