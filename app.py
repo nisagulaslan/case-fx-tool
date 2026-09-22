@@ -55,7 +55,7 @@ async def get_currencies():
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(url)
-    except httpx.TimeoutException:
+    except (httpx.TimeoutException, httpx.RequestError):
         raise HTTPException(
             status_code=504,
             detail={
@@ -194,7 +194,7 @@ async def convert(
                         "symbols": to_code,
                     },
                 )
-        except httpx.TimeoutException:
+        except (httpx.TimeoutException, httpx.RequestError):
             raise HTTPException(
                 status_code=504,
                 detail={
