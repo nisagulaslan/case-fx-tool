@@ -1,6 +1,6 @@
 import os
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -255,7 +255,7 @@ async def convert(
 
         rate_cache[cache_key] = (rate, rate_date)
 
-    result = amount * rate
+    result = (amount * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     return {
         "amount": amount,

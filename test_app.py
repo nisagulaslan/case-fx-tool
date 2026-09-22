@@ -375,3 +375,100 @@ def test_rate_is_cached(monkeypatch):
     assert first_response.json()["result"] == 14042.95
     assert second_response.json()["result"] == 28085.9
     assert call_count == 1
+
+
+def test_rate_date_differs_from_asked_date(monkeypatch):
+    app.rate_cache.clear()
+
+    async def fake_get_currencies():
+        return {"EUR": "Euro", "TRY": "Turkish Lira"}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get(self, url, params=None):
+            # asked for a Saturday, upstream returns Friday's rate
+            return FakeResponse(
+                200,
+                {
+                    "amount": 1.0,
+                    "base": "EUR",
+                    "date": "2026-08-28",  # Friday
+                    "rates": {"TRY": 56.1718},
+                },
+            )
+
+    monkeypatch.setattr(app, "get_currencies", fake_get_currencies)
+    monkeypatch.setattr(app.httpx, "AsyncClient", FakeClient)
+
+    response = client.get(
+        "/tools/convert",
+        params={
+            "amount": "250",
+            "from": "EUR",
+            "to": "TRY",
+            "date": "2026-08-29",  # Saturday — no rate published
+        },
+    )
+
+    data = response.json()
+    assert response.status_code == 200
+    assert data["asked_date"] == "2026-08-29"
+    assert data["rate_date"] == "2026-08-28"
+    assert data["asked_date"] != data["rate_date"]
+
+
+def test_result_is_rounded_to_two_decimal_places(monkeypatch):
+    app.rate_cache.clear()
+
+    async def fake_get_currencies():
+        return {"EUR": "Euro", "TRY": "Turkish Lira"}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get(self, url, params=None):
+            return FakeResponse(
+                200,
+                {
+                    "amount": 1.0,
+                    "base": "EUR",
+                    "date": "2026-08-28",
+                    "rates": {
+                        "TRY": "56.171812345",
+                    },
+                },
+            )
+
+    monkeypatch.setattr(app, "get_currencies", fake_get_currencies)
+    monkeypatch.setattr(app.httpx, "AsyncClient", FakeClient)
+
+    response = client.get(
+        "/tools/convert",
+        params={
+            "amount": "333.123456789",
+            "from": "EUR",
+            "to": "TRY",
+            "date": "2026-08-28",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["rate"] == 56.171812345
+    assert data["result"] == 18712.15
