@@ -70,6 +70,8 @@ Example successful response:
 }
 ```
 
+result is rounded to 2 decimal places using ROUND_HALF_UP. The exchange rate itself is not rounded before the calculation.
+
 `asked_date` is the date requested by the caller. `rate_date` is the actual date returned by Frankfurter for the rate used. They may differ for weekends or holidays.
 
 The service never invents a rate. If the upstream returns a rate for an earlier published date, that actual date is exposed as `rate_date`.
@@ -92,6 +94,10 @@ Rates are cached by `from`, `to`, and requested date, so repeating the same conv
 | `upstream_invalid_response` |    502 | Frankfurter returns invalid or unexpected JSON      |
 
 Dates before the available rate series are treated as `rate_not_available`.
+
+Note: if `from` and `to` are identical but also not real currency codes,
+the response is `same_currency`, not `invalid_currency` — the equality
+check runs before the currency lookup.
 
 All failures return a non-2xx status and:
 

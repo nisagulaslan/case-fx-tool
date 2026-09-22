@@ -8,7 +8,7 @@
 
 * The amount must be greater than zero and must have fewer than 10 decimal places.
 
-* For weekends and holidays, Frankfurter may return the most recently published rate. I use the `date` field returned by the upstream as `rate_date`, while keeping the requested date as `asked_date`. This makes it explicit when the actual rate date differs from the requested date.
+* For weekends and holidays, Frankfurter may return the most recently published rate. I use the `date` field returned by the upstream as `rate_date`, while keeping the requested date as `asked_date`. This makes it explicit when the actual rate date differs from the requested date. Tested explicitly with a case where the two dates differ.
 
 * If no rate is available for the requested date, the service returns `rate_not_available` rather than inventing or silently substituting a rate.
 
@@ -16,9 +16,11 @@
 
 * Rates are cached by source currency, target currency, and requested date. The amount is intentionally not part of the cache key because the same rate can be reused for different amounts.
 
-## If I had another day
+* `result` is quantized to 2 decimal places (`ROUND_HALF_UP`) after multiplying the full-precision rate by the amount, rather than rounding the rate first, to avoid losing precision before the conversion.
 
-I would add more integration-style tests around different upstream response shapes and more explicit tests for weekend/holiday fallback behavior. I would also consider a bounded cache strategy for a long-running production service.
+## With another day
+
+I would consider a bounded cache strategy for a long-running production service and add more tests around different upstream response shapes, such as malformed rates, unexpected currency sets, and partial JSON.
 
 ## AI tools
 
